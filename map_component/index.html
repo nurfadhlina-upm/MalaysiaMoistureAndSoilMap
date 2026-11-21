@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body { margin: 0; font-family: sans-serif; }
+    #card { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 0.75rem; box-shadow: 0 1px 2px #0f172a12; }
+    #header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.75rem 1rem; }
+    #title { margin: 0; color: #1e293b; font-size: 0.875rem; font-weight: 600; }
+    #description { margin: 0.25rem 0 0; color: #64748b; font-size: 0.75rem; }
+    #hint { margin: 0.25rem 0 0; color: #64748b; font-size: 0.6875rem; }
+    #map { height: 490px; width: 100%; }
+  </style>
+</head>
+<body>
+  <main id="card">
+    <header id="header">
+      <div>
+        <p id="title"></p>
+        <p id="description"></p>
+        <p id="hint">Click the map to inspect this layer's value.</p>
+      </div>
+      <div id="legend"></div>
+    </header>
+    <div id="map" aria-label="Interactive soil map"></div>
+  </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    let map;
+
+    function sendStreamlitMessage(type, payload) {
+      window.parent.postMessage(
+        { isStreamlitMessage: true, type, ...payload },
+        "*"
+      );
+    }
+
+    function popupContent(label, value, latitude, longitude) {
+      const container = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = label;
+      const reading = document.createElement("div");
+      reading.textContent = value;
+      const coordinates = document.createElement("small");
+      coordinates.textContent =
+        `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+      container.append(title, reading, coordinates);
+      return container;
+    }
+
+    function render(args) {
+      if (map) map.remove();
+
+      document.getElementById("title").textContent = args.layer_title;
+      document.getElementById("description").textContent = args.layer_description;
+      document.getElementById("legend").innerHTML = args.legend_html;
+
+      map = L.map("map", { scrollWheelZoom: true });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(map);
+
+      if (args.tile_url) {
+        L.tileLayer(args.tile_url, { opacity: 0.78, maxZoom: 12 }).addTo(map);
+      }
+
+      const selectedPoint = args.selected_point;
+      const hasSelectedPoint = selectedPoint &&
+        Number.isFinite(selectedPoint.lat) &&
+        Number.isFinite(selectedPoint.lon);
+      const hasGpsPoint = Number.isFinite(args.latitude) &&
+        Number.isFinite(args.longitude);
+
+      if (hasSelectedPoint) {
+        map.setView([selectedPoint.lat, selectedPoint.lon], 9);
+        L.circleMarker([selectedPoint.lat, selectedPoint.lon], {
+          radius: 7,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: "#dc2626",
+          fillOpacity: 1
+        }).addTo(map).bindPopup(popupContent(
+          args.selected_value_label,
+          args.selected_value || "Value unavailable",
+          selectedPoint.lat,
+          selectedPoint.lon
+        )).openPopup();
+      } else if (hasGpsPoint) {
+        map.setView([args.latitude, args.longitude], 9);
+      } else {
+        map.fitBounds(args.map_bounds, { padding: [12, 12] });
+      }
+
+      if (hasGpsPoint) {
+        L.circleMarker([args.latitude, args.longitude], {
+          radius: 7,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: "#16a34a",
+          fillOpacity: 1
+        }).addTo(map).bindPopup("Selected GPS location");
+      }
+
+      map.on("click", event => {
+        const latitude = Number(event.latlng.lat.toFixed(5));
+        const longitude = Number(event.latlng.lng.toFixed(5));
+        L.circleMarker([latitude, longitude], {
+          radius: 7,
+          color: "#ffffff",
+          weight: 2,
+          fillColor: "#dc2626",
+          fillOpacity: 1
+        }).addTo(map).bindPopup(popupContent(
+          args.selected_value_label,
+          "Reading selected map value...",
+          latitude,
+          longitude
+        )).openPopup();
+        sendStreamlitMessage("streamlit:setComponentValue", {
+          value: { lat: latitude, lon: longitude, clickId: Date.now() },
+          dataType: "json"
+        });
+      });
+
+      setTimeout(() => {
+        map.invalidateSize();
+        sendStreamlitMessage("streamlit:setFrameHeight", { height: 550 });
+      }, 100);
+    }
+
+    window.addEventListener("message", event => {
+      if (event.data && event.data.type === "streamlit:render") {
+        render(event.data.args);
+      }
+    });
+
+    setTimeout(() => {
+      sendStreamlitMessage("streamlit:componentReady", { apiVersion: 1 });
+    }, 100);
+  </script>
+</body>
+</html>
